@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && request.auth.token.role == 'admin'; }
+    function isTeacher() { return signedIn() && request.auth.token.role == 'teacher'; }
+    function me() { return get(/databases/$(db)/documents/users/$(request.auth.uid)).data; }
+    // A student is active when not blocked and approved by the administrator (self-registered accounts start unapproved).
+    function active() { return signedIn() && me().get('blocked', false) != true && me().get('approved', true) == true; }
+    function own(uid) { return signedIn() && request.auth.uid == uid && active(); }
+
+    match /users/{uid} {
+      allow read: if isAdmin() || isTeacher() || (signedIn() && request.auth.uid == uid);
+      allow write: if isAdmin();
+    }
+    match /exams/{id} {
+      allow read: if isAdmin() || isTeacher() || active();
+      allow write: if isAdmin() || isTeacher();
+    }
+    // A student reads only results whose uid is their own.
+    match /results/{id} {
+      allow read: if isAdmin() || isTeacher() || own(resource.data.uid);
+      allow write: if isAdmin() || isTeacher();
+    }
+    match /settings/{doc} { allow read: if true; allow write: if isAdmin(); }
+    match /teachers/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /gallery/{id} { allow read: if true; allow write: if isAdmin(); }
+    // Applications are created only by the server (/api/apply).
+    match /applications/{id} {
+      allow read, update, delete: if isAdmin();
+      allow create: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
